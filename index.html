@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rust 3D: Ultimate Monuments & Survival</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; user-select: none; -webkit-user-select: none;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #050505;
+        }
+        #game-canvas { width: 100%; height: 100%; display: block; }
+        
+        .rust-panel {
+            background: rgba(18, 15, 12, 0.92);
+            border: 2px solid #4a3828;
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(6px);
+        }
+        
+        .rust-btn {
+            background: linear-gradient(180deg, #6e4e34 0%, #3a281a 100%);
+            border: 1px solid #946944;
+            color: #ebd9c7;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
+            transition: all 0.12s ease;
+        }
+        .rust-btn:hover {
+            background: linear-gradient(180deg, #825d3f 0%, #483222 100%);
+            border-color: #d69865;
+        }
+        .rust-btn:active, .rust-btn.active {
+            background: linear-gradient(180deg, #362619 0%, #20160e 100%);
+            border-color: #e2a06c;
+            transform: scale(0.96);
+        }
+
+        .crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 14px; height: 14px; transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 20;
+        }
+        .crosshair::before, .crosshair::after {
+            content: ''; position: absolute; background: rgba(255, 255, 255, 0.85);
+            box-shadow: 0 0 2px rgba(0,0,0,0.8);
+        }
+        .crosshair::before { top: 6px; left: 0; width: 14px; height: 2px; }
+        .crosshair::after { top: 0; left: 6px; width: 2px; height: 14px; }
+
+        /* Rust style hitmarker */
+        #hitmarker {
+            position: absolute; top: 50%; left: 50%;
+            width: 22px; height: 22px; transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 25; opacity: 0;
+            transition: opacity 0.05s ease-out;
+        }
+        #hitmarker::before, #hitmarker::after {
+            content: ''; position: absolute; background: #ff3333;
+            box-shadow: 0 0 4px #ff0000;
+        }
+        #hitmarker::before { top: 10px; left: 0; width: 22px; height: 2px; }
+        #hitmarker::after { top: 0; left: 10px; width: 2px; height: 22px; }
+
+        /* Rust Pop-up Loot Feed */
+        #loot-feed {
+            position: absolute; bottom: 100px; right: 25px;
+            display: flex; flex-direction: column-reverse; gap: 6px;
+            pointer-events: none; z-index: 30;
+        }
+        .loot-item {
+            background: rgba(18, 14, 10, 0.92);
+            border-left: 4px solid #e67e22;
+            color: #fff; font-weight: 800; font-size: 13px;
+            padding: 8px 16px; border-radius: 4px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.7);
+            animation: lootPop 2.2s forwards;
+        }
+        @keyframes lootPop {
+            0% { opacity: 0; transform: translateX(25px); }
+            12% { opacity: 1; transform: translateX(0); }
+            80% { opacity: 1; transform: translateX(0); }
+            100% { opacity: 0; transform: translateY(-12px); }
+        }
+
+        /* Touch Joystick UI */
+        #joystick-base {
+            width: 130px; height: 130px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%; position: absolute;
+            bottom: 35px; left: 35px; display: none; touch-action: none; z-index: 35;
+        }
+        #joystick-stick {
+            width: 55px; height: 55px;
+            background: rgba(230, 110, 35, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            border-radius: 50%; position: absolute; top: 37.5px; left: 37.5px;
+            pointer-events: none;
+        }
+
+        /* Radiation Static Overlay */
+        .rad-screen {
+            background: radial-gradient(circle, rgba(163,230,53,0.05) 0%, rgba(101,163,13,0.35) 100%);
+            animation: radPulse 1s infinite alternate;
+        }
+        @keyframes radPulse {
+            0% { opacity: 0.4; } 100% { opacity: 0.95; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Game Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Crosshair & Hitmarker -->
+    <div class="crosshair"></div>
+    <div id="hitmarker"></div>
+
+    <!-- Loot Notification Feed -->
+    <div id="loot-feed"></div>
+
+    <!-- Radiation Overlay Screen -->
+    <div id="rad-overlay" class="fixed inset-0 rad-screen pointer-events-none z-10 hidden"></div>
+
+    <!-- Top HUD Bar -->
+    <div id="hud" class="absolute top-3 left-3 right-3 pointer-events-none flex justify-between items-start z-20">
+        <!-- Vitals Status -->
+        <div class="rust-panel p-3.5 rounded-2xl w-60 pointer-events-auto space-y-2.5">
+            <div class="flex items-center justify-between text-xs text-amber-200 font-bold">
+                <span class="tracking-wider">RUST SURVIVAL 3D</span>
+                <span id="time-display" class="text-amber-400">12:00</span>
+            </div>
+            
+            <!-- Health -->
+            <div>
+                <div class="flex justify-between text-[11px] text-red-300 font-bold">
+                    <span>❤️ Здоровье</span><span id="hp-val">100</span>
+                </div>
+                <div class="w-full bg-stone-900 rounded-full h-2 border border-red-900/60 overflow-hidden mt-0.5">
+                    <div id="hp-bar" class="bg-red-600 h-full transition-all duration-200" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <!-- Hunger -->
+            <div>
+                <div class="flex justify-between text-[11px] text-amber-300 font-bold">
+                    <span>🍗 Голод</span><span id="hunger-val">100</span>
+                </div>
+                <div class="w-full bg-stone-900 rounded-full h-2 border border-amber-900/60 overflow-hidden mt-0.5">
+                    <div id="hunger-bar" class="bg-amber-600 h-full transition-all duration-200" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <!-- Thirst -->
+            <div>
+                <div class="flex justify-between text-[11px] text-cyan-300 font-bold">
+                    <span>💧 Жажда</span><span id="thirst-val">100</span>
+                </div>
+                <div class="w-full bg-stone-900 rounded-full h-2 border border-cyan-900/60 overflow-hidden mt-0.5">
+                    <div id="thirst-bar" class="bg-cyan-500 h-full transition-all duration-200" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <!-- Radiation -->
+            <div id="rad-indicator" class="hidden">
+                <div class="flex justify-between text-[11px] text-lime-400 font-bold animate-pulse">
+                    <span>☢️ РАДИАЦИЯ</span><span id="rad-val">0 RAD</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Inventory / Resource Stats -->
+        <div class="rust-panel p-3 rounded-2xl pointer-events-auto grid grid-cols-4 gap-2 text-center text-xs font-bold text-amber-100 shadow-xl">
+            <div class="flex flex-col items-center bg-stone-900/80 px-3 py-1.5 rounded-xl border border-amber-900/40">
+                <span class="text-amber-600">🪵 Дерево</span>
+                <span id="res-wood" class="text-sm text-white">50</span>
+            </div>
+            <div class="flex flex-col items-center bg-stone-900/80 px-3 py-1.5 rounded-xl border border-amber-900/40">
+                <span class="text-gray-400">🪨 Камень</span>
+                <span id="res-stone" class="text-sm text-white">30</span>
+            </div>
+            <div class="flex flex-col items-center bg-stone-900/80 px-3 py-1.5 rounded-xl border border-amber-900/40">
+                <span class="text-cyan-400">⚙️ Металл</span>
+                <span id="res-metal" class="text-sm text-white">0</span>
+            </div>
+            <div class="flex flex-col items-center bg-stone-900/80 px-3 py-1.5 rounded-xl border border-amber-900/40">
+                <span class="text-yellow-400">🏷️ Скрап</span>
+                <span id="res-scrap" class="text-sm text-white">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Hotbar Slots (1-6) -->
+    <div id="hotbar" class="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-auto flex gap-2 rust-panel p-2 rounded-2xl z-20">
+        <button id="slot-1" onclick="selectSlot(1)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs border-2 border-amber-500 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">1</span>
+            <span class="text-xl">🪨</span>
+            <span class="text-[9px]">Камень</span>
+        </button>
+        <button id="slot-2" onclick="selectSlot(2)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs opacity-50 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">2</span>
+            <span class="text-xl">🪓</span>
+            <span class="text-[9px]">Топор</span>
+        </button>
+        <button id="slot-3" onclick="selectSlot(3)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs opacity-50 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">3</span>
+            <span class="text-xl">⛏️</span>
+            <span class="text-[9px]">Кирка</span>
+        </button>
+        <button id="slot-4" onclick="selectSlot(4)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs opacity-50 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">4</span>
+            <span class="text-xl">🗡️</span>
+            <span class="text-[9px]">Копье</span>
+        </button>
+        <button id="slot-5" onclick="selectSlot(5)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs opacity-50 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">5</span>
+            <span class="text-xl">🔨</span>
+            <span class="text-[9px]">Молот</span>
+        </button>
+        <button id="slot-6" onclick="selectSlot(6)" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs opacity-50 relative">
+            <span class="text-[10px] text-amber-400 absolute top-1 left-1.5">6</span>
+            <span class="text-xl">🩹</span>
+            <span class="text-[9px]">Бинт</span>
+        </button>
+        <button id="btn-open-craft" onclick="toggleCrafting()" class="rust-btn w-14 h-14 rounded-xl flex flex-col items-center justify-center font-bold text-xs bg-amber-900 border-amber-600">
+            <span class="text-xl">🛠️</span>
+            <span class="text-[9px]">Крафт (E)</span>
+        </button>
+    </div>
+
+    <!-- Crafting Window Modal -->
+    <div id="crafting-modal" class="hidden fixed inset-0 bg-black/85 z-40 flex items-center justify-center p-4">
+        <div class="rust-panel w-full max-w-xl p-6 rounded-2xl relative max-h-[88vh] flex flex-col shadow-2xl">
+            <div class="flex justify-between items-center border-b border-amber-900/60 pb-3 mb-4">
+                <h2 class="text-2xl font-black text-amber-400 flex items-center gap-2">🛠️ Меню Крафта RUST</h2>
+                <button onclick="toggleCrafting()" class="text-gray-400 hover:text-white text-3xl font-bold">&times;</button>
+            </div>
+            
+            <div class="overflow-y-auto space-y-3.5 pr-2 flex-1">
+                <!-- Recipe: Wood Axe -->
+                <div class="bg-stone-900/90 p-4 rounded-xl border border-amber-900/50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-amber-200 text-base">🪓 Деревянный Топор</h3>
+                        <p class="text-xs text-gray-400">Ускоряет добычу дерева в 3 раза</p>
+                        <p class="text-xs text-amber-500 font-bold mt-1">Требуется: 50 Дерева, 20 Камня</p>
+                    </div>
+                    <button onclick="craftItem('hatchet')" class="rust-btn px-4 py-2.5 rounded-xl font-bold text-sm">Крафт</button>
+                </div>
+
+                <!-- Recipe: Pickaxe -->
+                <div class="bg-stone-900/90 p-4 rounded-xl border border-amber-900/50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-amber-200 text-base">⛏️ Каменная Кирка</h3>
+                        <p class="text-xs text-gray-400">Ускоряет добычу камня и металла в 3 раза</p>
+                        <p class="text-xs text-amber-500 font-bold mt-1">Требуется: 30 Дерева, 30 Камня</p>
+                    </div>
+                    <button onclick="craftItem('pickaxe')" class="rust-btn px-4 py-2.5 rounded-xl font-bold text-sm">Крафт</button>
+                </div>
+
+                <!-- Recipe: Spear -->
+                <div class="bg-stone-900/90 p-4 rounded-xl border border-amber-900/50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-amber-200 text-base">🗡️ Копье</h3>
+                        <p class="text-xs text-gray-400">Оружие для борьбы со учеными и животным</p>
+                        <p class="text-xs text-amber-500 font-bold mt-1">Требуется: 40 Дерева, 10 Металла</p>
+                    </div>
+                    <button onclick="craftItem('spear')" class="rust-btn px-4 py-2.5 rounded-xl font-bold text-sm">Крафт</button>
+                </div>
+
+                <!-- Recipe: Building Hammer -->
+                <div class="bg-stone-900/90 p-4 rounded-xl border border-amber-900/50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-amber-200 text-base">🔨 Строительный Молот (Стена)</h3>
+                        <p class="text-xs text-gray-400">Активирует режим постройки защитных стен</p>
+                        <p class="text-xs text-amber-500 font-bold mt-1">Требуется: 40 Дерева</p>
+                    </div>
+                    <button onclick="craftItem('hammer')" class="rust-btn px-4 py-2.5 rounded-xl font-bold text-sm">Крафт</button>
+                </div>
+
+                <!-- Recipe: Bandage -->
+                <div class="bg-stone-900/90 p-4 rounded-xl border border-amber-900/50 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-amber-200 text-base">🩹 Бинт</h3>
+                        <p class="text-xs text-gray-400">Восстанавливает 45 HP здоровья</p>
+                        <p class="text-xs text-amber-500 font-bold mt-1">Требуется: 15 Дерева, 5 Скрапа</p>
+                    </div>
+                    <button onclick="craftItem('bandage')" class="rust-btn px-4 py-2.5 rounded-xl font-bold text-sm">Крафт</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Controls Interface -->
+    <div id="touch-controls" class="fixed inset-0 pointer-events-none z-35 hidden">
+        <div id="joystick-base">
+            <div id="joystick-stick"></div>
+        </div>
+        <div id="touch-look-zone" class="absolute right-0 top-0 w-1/2 h-full pointer-events-auto"></div>
+
+        <div class="absolute right-5 bottom-24 flex flex-col gap-3 pointer-events-auto">
+            <button id="btn-attack" class="rust-btn w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold shadow-2xl">
+                ⚔️
+            </button>
+            <div class="flex gap-2">
+                <button id="btn-jump" class="rust-btn w-14 h-14 rounded-full flex items-center justify-center font-bold text-xs shadow-xl">
+                    ПРОБЕЛ
+                </button>
+                <button id="btn-cam" class="rust-btn w-14 h-14 rounded-full flex items-center justify-center text-xs font-bold shadow-xl">
+                    🎥
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Overlay -->
+    <div id="start-overlay" class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+        <div class="rust-panel max-w-lg w-full p-6 rounded-2xl text-center space-y-5 shadow-2xl">
+            <h1 class="text-4xl font-black text-amber-500 tracking-wider">RUST 3D: MONUMENTS</h1>
+            <p class="text-xs text-amber-200/80 uppercase tracking-widest font-bold">Выживание • РТ Сфера • Ученые • Застройка</p>
+            
+            <div class="text-xs text-gray-300 space-y-2 text-left bg-stone-900/90 p-4 rounded-xl border border-amber-900/40">
+                <p class="font-bold text-amber-400 text-center text-sm mb-1">🎮 Управление ПК / ТАЧ:</p>
+                <p>• <b>WASD</b> / Джойстик — Бег, <b>Мышь</b> / Экран — Обзор, <b>ЛКМ</b> — Атака/Добыча/Постройка.</p>
+                <p>• <b>1..6</b> — Смена оружия в руках (3D модель отображается!).</p>
+                <p>• <b>E</b> — Открыть Меню Крафта.</p>
+                <p>• <b>Монументы (РТ):</b> Исследуйте <i>Сферу (Dome)</i>, <i>Супермаркет</i> и <i>Радиовышку</i>. Убивайте синих ученых за лут!</p>
+            </div>
+
+            <button id="start-btn" class="rust-btn w-full py-4 text-xl font-black rounded-xl tracking-wide uppercase shadow-2xl">
+                ИГРАТЬ В RUST 3D
+            </button>
+        </div>
+    </div>
+
+    <!-- Script Game Engine Logic -->
+    <script>
+        // --- Web Audio Synth Sound Effects ---
+        class SoundEngine {
+            constructor() { this.ctx = null; this.geigerTimer = 0; }
+            init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+            
+            playHitWood() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(160, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.09);
+                gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.09);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.09);
+            }
+            playHitStone() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(360, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(70, this.ctx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.08);
+            }
+            playHitBarrel() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(580, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(120, this.ctx.currentTime + 0.14);
+                gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.14);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.14);
+            }
+            playGeigerClick() {
+                if (!this.ctx) return;
+                const bufferSize = this.ctx.sampleRate * 0.005;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                noise.connect(gain); gain.connect(this.ctx.destination);
+                noise.start();
+            }
+            playCraft() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(350, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(750, this.ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.2);
+            }
+            playHitEnemy() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(90, this.ctx.currentTime + 0.12);
+                gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.12);
+            }
+        }
+        const sfx = new SoundEngine();
+
+        // --- Game Inventory & Player State ---
+        const state = {
+            wood: 50, stone: 30, metal: 0, scrap: 0,
+            hp: 100, maxHp: 100,
+            hunger: 100, thirst: 100,
+            radiation: 0,
+            activeSlot: 1, // 1: Rock, 2: Hatchet, 3: Pickaxe, 4: Spear, 5: Hammer, 6: Bandage
+            inventory: { rock: true, hatchet: false, pickaxe: false, spear: false, hammer: false, bandage: false },
+            isFirstPerson: true,
+            isCraftingOpen: false,
+            gameStarted: false
+        };
+
+        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+        // --- Three.js Setup ---
+        const canvas = document.getElementById('game-canvas');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.FogExp2(0x87ceeb, 0.009);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // Sunlight & Ambient
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffaed, 1.25);
+        sunLight.position.set(100, 140, 100);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 400;
+        const d = 120;
+        sunLight.shadow.camera.left = -d; sunLight.shadow.camera.right = d;
+        sunLight.shadow.camera.top = d; sunLight.shadow.camera.bottom = -d;
+        scene.add(sunLight);
+
+        // --- Player Setup ---
+        const playerGroup = new THREE.Group();
+        scene.add(playerGroup);
+        playerGroup.position.set(0, 0, 0);
+
+        // Player Physical Mesh
+        const playerMesh = new THREE.Group();
+        const bodyGeo = new THREE.CylinderGeometry(0.45, 0.45, 1.7, 8);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc49a6c, roughness: 0.8 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.85; body.castShadow = true;
+        playerMesh.add(body);
+        playerGroup.add(playerMesh);
+
+        // Attached 3D Hand Container for 1st Person
+        const toolContainer = new THREE.Group();
+        toolContainer.position.set(0.3, -0.28, -0.45);
+        toolContainer.rotation.set(0.1, -0.2, 0);
+        camera.add(toolContainer);
+        scene.add(camera);
+
+        let currentToolMesh = null;
+
+        // --- 3D Hand Held Models ---
+        function createTool3DModel(type) {
+            const group = new THREE.Group();
+            
+            if (type === 'rock') {
+                const rockGeo = new THREE.DodecahedronGeometry(0.12, 1);
+                const rockMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.95 });
+                const rock = new THREE.Mesh(rockGeo, rockMat);
+                rock.scale.set(1, 1.25, 0.9);
+                group.add(rock);
+            } 
+            else if (type === 'hatchet') {
+                const handle = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.018, 0.022, 0.5),
+                    new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.9 })
+                );
+                handle.rotation.z = -Math.PI / 8;
+                const head = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.18, 0.12, 0.035),
+                    new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.85, roughness: 0.25 })
+                );
+                head.position.set(0.08, 0.2, 0);
+                group.add(handle, head);
+            } 
+            else if (type === 'pickaxe') {
+                const handle = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.018, 0.022, 0.55),
+                    new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.9 })
+                );
+                handle.rotation.z = -Math.PI / 8;
+
+                const pickGroup = new THREE.Group();
+                const bladeLeft = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.03, 0.22, 4),
+                    new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.2 })
+                );
+                bladeLeft.rotation.z = Math.PI / 2;
+                bladeLeft.position.x = -0.11;
+
+                const bladeRight = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.03, 0.22, 4),
+                    new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.2 })
+                );
+                bladeRight.rotation.z = -Math.PI / 2;
+                bladeRight.position.x = 0.11;
+
+                const centerBlock = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.07, 0.06, 0.05),
+                    new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.8 })
+                );
+
+                pickGroup.add(bladeLeft, bladeRight, centerBlock);
+                pickGroup.position.set(0.06, 0.22, 0);
+                group.add(handle, pickGroup);
+            } 
+            else if (type === 'spear') {
+                const shaft = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.015, 0.015, 1.0),
+                    new THREE.MeshStandardMaterial({ color: 0x664422, roughness: 0.9 })
+                );
+                shaft.rotation.x = Math.PI / 2.3;
+                const tip = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.035, 0.2, 4),
+                    new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9 })
+                );
+                tip.rotation.x = -Math.PI / 2.3;
+                tip.position.set(0, 0.08, -0.5);
+                group.add(shaft, tip);
+            } 
+            else if (type === 'hammer') {
+                const handle = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.018, 0.018, 0.42),
+                    new THREE.MeshStandardMaterial({ color: 0x3d2616 })
+                );
+                const head = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.14, 0.09, 0.09),
+                    new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6 })
+                );
+                head.position.set(0, 0.18, 0);
+                group.add(handle, head);
+            }
+            else if (type === 'bandage') {
+                const roll = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.05, 0.05, 0.08),
+                    new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 })
+                );
+                roll.rotation.x = Math.PI / 2;
+                group.add(roll);
+            }
+
+            return group;
+        }
+
+        function updateHandToolMesh() {
+            if (currentToolMesh) toolContainer.remove(currentToolMesh);
+
+            const toolTypes = { 1: 'rock', 2: 'hatchet', 3: 'pickaxe', 4: 'spear', 5: 'hammer', 6: 'bandage' };
+            const currentType = toolTypes[state.activeSlot];
+
+            if (state.inventory[currentType]) {
+                currentToolMesh = createTool3DModel(currentType);
+                toolContainer.add(currentToolMesh);
+            }
+            toggleBuildingPreview();
+        }
+
+        // --- Building Preview System ---
+        let buildPreviewMesh = null;
+        function createBuildingPreview() {
+            const geo = new THREE.BoxGeometry(3, 3, 0.3);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.45, wireframe: true });
+            buildPreviewMesh = new THREE.Mesh(geo, mat);
+            buildPreviewMesh.visible = false;
+            scene.add(buildPreviewMesh);
+        }
+        createBuildingPreview();
+
+        function toggleBuildingPreview() {
+            if (buildPreviewMesh) {
+                buildPreviewMesh.visible = (state.activeSlot === 5 && state.inventory.hammer);
+            }
+        }
+
+        // Player Physics variables
+        const velocity = new THREE.Vector3();
+        let isGrounded = false;
+        const GRAVITY = 26;
+        const JUMP_FORCE = 9.8;
+        const SPEED = 7.5;
+        let pitch = 0, yaw = 0;
+
+        // Terrain Mesh Generation
+        const worldSize = 400;
+        const groundGeo = new THREE.PlaneGeometry(worldSize, worldSize, 90, 90);
+        const posAttr = groundGeo.attributes.position;
+        for (let i = 0; i < posAttr.count; i++) {
+            const x = posAttr.getX(i), y = posAttr.getY(i);
+            const z = Math.sin(x * 0.04) * Math.cos(y * 0.04) * 2.2;
+            posAttr.setZ(i, z);
+        }
+        groundGeo.computeVertexNormals();
+
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x486629, roughness: 0.95 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const interactables = [];
+        const scientists = [];
+
+        // --- MONUMENTS (РТ) & STRUCTURE BUILDERS ---
+
+        // 1. THE DOME (Сфера)
+        const domePos = new THREE.Vector3(-80, 0, -70);
+        function buildTheDome(x, z) {
+            const domeGroup = new THREE.Group();
+            domeGroup.position.set(x, 0, z);
+
+            const sphereGeo = new THREE.SphereGeometry(22, 14, 10);
+            const sphereMat = new THREE.MeshStandardMaterial({ 
+                color: 0xb91c1c, wireframe: true, roughness: 0.6, metalness: 0.7 
+            });
+            const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+            sphere.position.y = 20;
+            domeGroup.add(sphere);
+
+            for (let i = 0; i < 4; i++) {
+                const leg = new THREE.Mesh(
+                    new THREE.CylinderGeometry(1.2, 1.8, 12),
+                    new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 })
+                );
+                const angle = (i * Math.PI) / 2;
+                leg.position.set(Math.cos(angle) * 14, 6, Math.sin(angle) * 14);
+                domeGroup.add(leg);
+            }
+
+            scene.add(domeGroup);
+        }
+        buildTheDome(domePos.x, domePos.z);
+
+        // 2. SUPERMARKET
+        function buildSupermarket(x, z) {
+            const market = new THREE.Group();
+            market.position.set(x, 0, z);
+
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(22, 6, 14),
+                new THREE.MeshStandardMaterial({ color: 0x776655, roughness: 0.8 })
+            );
+            body.position.y = 3; body.castShadow = true;
+            market.add(body);
+
+            const sign = new THREE.Mesh(
+                new THREE.BoxGeometry(10, 2, 0.4),
+                new THREE.MeshStandardMaterial({ color: 0xcc3322 })
+            );
+            sign.position.set(0, 7, 7.1);
+            market.add(sign);
+
+            scene.add(market);
+        }
+        buildSupermarket(70, -60);
+
+        // 3. SATELLITE DISH (Радиовышка)
+        function buildSatelliteDish(x, z) {
+            const sat = new THREE.Group();
+            sat.position.set(x, 0, z);
+
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(2, 3, 10),
+                new THREE.MeshStandardMaterial({ color: 0x666666 })
+            );
+            base.position.y = 5;
+
+            const dish = new THREE.Mesh(
+                new THREE.SphereGeometry(8, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.5),
+                new THREE.MeshStandardMaterial({ color: 0xdddddd, side: THREE.DoubleSide })
+            );
+            dish.position.set(0, 11, 0);
+            dish.rotation.x = Math.PI / 3;
+
+            sat.add(base, dish);
+            scene.add(sat);
+        }
+        buildSatelliteDish(-60, 90);
+
+        // --- SCIENTIST AI NPC SPAWNER ---
+        function spawnScientist(x, z) {
+            const sci = new THREE.Group();
+            sci.position.set(x, 0, z);
+
+            // Blue Hazmat Suit
+            const body = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.45, 0.45, 1.7),
+                new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.5 })
+            );
+            body.position.y = 0.85;
+
+            // Yellow Visor Head
+            const head = new THREE.Mesh(
+                new THREE.SphereGeometry(0.28, 8, 8),
+                new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.8 })
+            );
+            head.position.y = 1.6;
+
+            sci.add(body, head);
+            sci.userData = { type: 'enemy', hp: 50, speed: 3.2, attackTimer: 0 };
+            scene.add(sci);
+            scientists.push(sci);
+            interactables.push(sci);
+        }
+
+        spawnScientist(domePos.x + 5, domePos.z + 5);
+        spawnScientist(70, -55);
+        spawnScientist(-55, 85);
+
+        // --- LOOT BARRELS & ORE SPAWNER ---
+        function spawnBarrel(x, z, type) {
+            const barrel = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.5, 1.3, 14),
+                new THREE.MeshStandardMaterial({ color: type === 'blue' ? 0x1d4ed8 : 0xb91c1c, metalness: 0.6, roughness: 0.4 })
+            );
+            barrel.position.set(x, 0.65, z);
+            barrel.castShadow = true;
+            barrel.userData = { type: 'barrel', hp: 3, resource: type === 'blue' ? 'scrap' : 'metal', yield: 10 };
+            scene.add(barrel);
+            interactables.push(barrel);
+        }
+
+        for (let i = 0; i < 22; i++) {
+            spawnBarrel(domePos.x + (Math.random() - 0.5) * 35, domePos.z + (Math.random() - 0.5) * 35, Math.random() > 0.5 ? 'blue' : 'red');
+            spawnBarrel(70 + (Math.random() - 0.5) * 25, -60 + (Math.random() - 0.5) * 25, 'blue');
+        }
+
+        // Environment Trees & Ore Nodes
+        function createTree(x, z) {
+            const tree = new THREE.Group();
+            tree.position.set(x, 0, z);
+            const trunk = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.35, 0.5, 4.5),
+                new THREE.MeshStandardMaterial({ color: 0x4a2e18 })
+            );
+            trunk.position.y = 2.25; trunk.castShadow = true;
+            const leaves = new THREE.Mesh(
+                new THREE.ConeGeometry(2.4, 5.5, 6),
+                new THREE.MeshStandardMaterial({ color: 0x2e4f1d })
+            );
+            leaves.position.y = 5; leaves.castShadow = true;
+            tree.add(trunk, leaves);
+            tree.userData = { type: 'tree', hp: 5, resource: 'wood', yield: 15 };
+            scene.add(tree);
+            interactables.push(tree);
+        }
+
+        function createOreNode(x, z) {
+            const rock = new THREE.Mesh(
+                new THREE.DodecahedronGeometry(1.1, 1),
+                new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.9 })
+            );
+            rock.position.set(x, 0.8, z);
+            rock.castShadow = true;
+            rock.userData = { type: 'rock', hp: 5, resource: 'stone', yield: 12 };
+            scene.add(rock);
+            interactables.push(rock);
+        }
+
+        for (let i = 0; i < 75; i++) {
+            const rx = (Math.random() - 0.5) * 360, rz = (Math.random() - 0.5) * 360;
+            if (Math.hypot(rx, rz) > 18) createTree(rx, rz);
+        }
+        for (let i = 0; i < 50; i++) {
+            const rx = (Math.random() - 0.5) * 360, rz = (Math.random() - 0.5) * 360;
+            if (Math.hypot(rx, rz) > 18) createOreNode(rx, rz);
+        }
+
+        // --- Controls Keyboard & Mouse Setup ---
+        const keys = { w: false, a: false, s: false, d: false, shift: false };
+
+        window.addEventListener('keydown', (e) => {
+            if (!state.gameStarted) return;
+            switch(e.code) {
+                case 'KeyW': keys.w = true; break;
+                case 'KeyS': keys.s = true; break;
+                case 'KeyA': keys.a = true; break;
+                case 'KeyD': keys.d = true; break;
+                case 'ShiftLeft': case 'ShiftRight': keys.shift = true; break;
+                case 'Space': if (isGrounded) velocity.y = JUMP_FORCE; break;
+                case 'KeyE': toggleCrafting(); break;
+                case 'KeyV': toggleCameraView(); break;
+                case 'Digit1': selectSlot(1); break;
+                case 'Digit2': selectSlot(2); break;
+                case 'Digit3': selectSlot(3); break;
+                case 'Digit4': selectSlot(4); break;
+                case 'Digit5': selectSlot(5); break;
+                case 'Digit6': selectSlot(6); break;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            switch(e.code) {
+                case 'KeyW': keys.w = false; break;
+                case 'KeyS': keys.s = false; break;
+                case 'KeyA': keys.a = false; break;
+                case 'KeyD': keys.d = false; break;
+                case 'ShiftLeft': case 'ShiftRight': keys.shift = false; break;
+            }
+        });
+
+        canvas.addEventListener('click', () => {
+            if (!isTouchDevice && state.gameStarted && !state.isCraftingOpen) {
+                canvas.requestPointerLock();
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === canvas) {
+                yaw -= e.movementX * 0.0024;
+                pitch -= e.movementY * 0.0024;
+                pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+            }
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (document.pointerLockElement === canvas && e.button === 0) performAttack();
+        });
+
+        // Touch Control logic
+        let touchMoveID = null, touchLookID = null;
+        let touchLookStart = { x: 0, y: 0 };
+        const joystickBase = document.getElementById('joystick-base');
+        const joystickStick = document.getElementById('joystick-stick');
+        let joystickVector = { x: 0, y: 0 };
+
+        if (isTouchDevice) {
+            document.getElementById('touch-controls').classList.remove('hidden');
+            joystickBase.style.display = 'block';
+
+            window.addEventListener('touchstart', (e) => {
+                for (let touch of e.changedTouches) {
+                    if (touch.clientX < window.innerWidth / 2 && touchMoveID === null && !state.isCraftingOpen) {
+                        touchMoveID = touch.identifier;
+                        updateJoystick(touch);
+                    }
+                }
+            });
+
+            window.addEventListener('touchmove', (e) => {
+                for (let touch of e.changedTouches) {
+                    if (touch.identifier === touchMoveID) {
+                        updateJoystick(touch);
+                    } else if (touch.identifier === touchLookID) {
+                        const dx = touch.clientX - touchLookStart.x;
+                        const dy = touch.clientY - touchLookStart.y;
+                        yaw -= dx * 0.0045;
+                        pitch -= dy * 0.0045;
+                        pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+                        touchLookStart = { x: touch.clientX, y: touch.clientY };
+                    }
+                }
+            });
+
+            window.addEventListener('touchend', (e) => {
+                for (let touch of e.changedTouches) {
+                    if (touch.identifier === touchMoveID) {
+                        touchMoveID = null;
+                        joystickVector = { x: 0, y: 0 };
+                        joystickStick.style.transform = `translate(0px, 0px)`;
+                    } else if (touch.identifier === touchLookID) touchLookID = null;
+                }
+            });
+
+            document.getElementById('touch-look-zone').addEventListener('touchstart', (e) => {
+                for (let touch of e.changedTouches) {
+                    if (touchLookID === null) {
+                        touchLookID = touch.identifier;
+                        touchLookStart = { x: touch.clientX, y: touch.clientY };
+                    }
+                }
+            });
+
+            document.getElementById('btn-attack').addEventListener('touchstart', (e) => { e.preventDefault(); performAttack(); });
+            document.getElementById('btn-jump').addEventListener('touchstart', (e) => { e.preventDefault(); if (isGrounded) velocity.y = JUMP_FORCE; });
+            document.getElementById('btn-cam').addEventListener('touchstart', (e) => { e.preventDefault(); toggleCameraView(); });
+        }
+
+        function updateJoystick(touch) {
+            const rect = joystickBase.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            let dx = touch.clientX - centerX, dy = touch.clientY - centerY;
+            const dist = Math.hypot(dx, dy), maxDist = rect.width / 2;
+            if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+            joystickStick.style.transform = `translate(${dx}px, ${dy}px)`;
+            joystickVector.x = dx / maxDist; joystickVector.y = dy / maxDist;
+        }
+
+        // --- HUD & NOTIFICATION HELPERS ---
+        function showHitmarker() {
+            const hm = document.getElementById('hitmarker');
+            hm.style.opacity = '1';
+            setTimeout(() => { hm.style.opacity = '0'; }, 80);
+        }
+
+        function addLootNotification(text) {
+            const feed = document.getElementById('loot-feed');
+            const item = document.createElement('div');
+            item.className = 'loot-item';
+            item.textContent = text;
+            feed.appendChild(item);
+            setTimeout(() => { item.remove(); }, 2000);
+        }
+
+        // --- ATTACK & BUILDING ACTIONS ---
+        let isAttacking = false;
+        const raycaster = new THREE.Raycaster();
+
+        function performAttack() {
+            if (isAttacking) return;
+            isAttacking = true;
+            sfx.init();
+
+            // Swing Hand Tool Animation
+            const origRot = toolContainer.rotation.x;
+            toolContainer.rotation.x += 0.85;
+            setTimeout(() => {
+                toolContainer.rotation.x = origRot;
+                isAttacking = false;
+            }, 140);
+
+            // Bandage Healing Check
+            if (state.activeSlot === 6 && state.inventory.bandage) {
+                state.hp = Math.min(state.maxHp, state.hp + 45);
+                addLootNotification("+45 HP Лечение");
+                updateHUD();
+                return;
+            }
+
+            // Building Wall Placement Check
+            if (state.activeSlot === 5 && state.inventory.hammer && buildPreviewMesh.visible) {
+                const wallGeo = new THREE.BoxGeometry(3, 3, 0.3);
+                const wallMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.9 });
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.copy(buildPreviewMesh.position);
+                wall.rotation.y = yaw;
+                wall.castShadow = true;
+                scene.add(wall);
+                sfx.playCraft();
+                addLootNotification("Стена построена!");
+                return;
+            }
+
+            // Raycast Attack
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(interactables, true);
+
+            if (intersects.length > 0 && intersects[0].distance < 4.0) {
+                let hitObj = intersects[0].object;
+                while (hitObj.parent && !hitObj.userData.type && hitObj.parent !== scene) {
+                    hitObj = hitObj.parent;
+                }
+
+                const data = hitObj.userData;
+                if (data && data.hp > 0) {
+                    let mult = 1.0;
+                    if (state.activeSlot === 2 && data.type === 'tree') mult = 3.0;
+                    if (state.activeSlot === 3 && data.type === 'rock') mult = 3.0;
+                    if (state.activeSlot === 4 && (data.type === 'enemy' || data.type === 'barrel')) mult = 3.0;
+
+                    data.hp -= (15 * mult);
+                    showHitmarker();
+
+                    if (data.type === 'enemy') {
+                        sfx.playHitEnemy();
+                        if (data.hp <= 0) {
+                            state.scrap += 25; state.metal += 20;
+                            addLootNotification("+25 Скрап (Ученый)");
+                            addLootNotification("+20 Металл (Ученый)");
+                        }
+                    } else if (data.type === 'tree') {
+                        sfx.playHitWood(); state.wood += Math.round(15 * mult);
+                        addLootNotification(`+${Math.round(15 * mult)} Дерево`);
+                    } else if (data.type === 'rock') {
+                        sfx.playHitStone(); state.stone += Math.round(12 * mult);
+                        addLootNotification(`+${Math.round(12 * mult)} Камень`);
+                    } else if (data.type === 'barrel') {
+                        sfx.playHitBarrel();
+                        if (data.resource === 'scrap') {
+                            state.scrap += 10;
+                            addLootNotification("+10 Скрап");
+                        } else {
+                            state.metal += 15;
+                            addLootNotification("+15 Металл");
+                        }
+                    }
+
+                    if (data.hp <= 0) {
+                        scene.remove(hitObj);
+                        const idx = interactables.indexOf(hitObj);
+                        if (idx > -1) interactables.splice(idx, 1);
+                        const sIdx = scientists.indexOf(hitObj);
+                        if (sIdx > -1) scientists.splice(sIdx, 1);
+                    }
+                    updateHUD();
+                }
+            }
+        }
+
+        // --- Slot Selection & Crafting ---
+        function selectSlot(slotNum) {
+            state.activeSlot = slotNum;
+            for (let i = 1; i <= 6; i++) {
+                const btn = document.getElementById(`slot-${i}`);
+                if (i === slotNum) btn.classList.add('border-2', 'border-amber-500', 'opacity-100');
+                else btn.classList.remove('border-2', 'border-amber-500');
+            }
+            updateHandToolMesh();
+        }
+
+        function toggleCrafting() {
+            state.isCraftingOpen = !state.isCraftingOpen;
+            const modal = document.getElementById('crafting-modal');
+            if (state.isCraftingOpen) {
+                modal.classList.remove('hidden');
+                if (document.pointerLockElement === canvas) document.exitPointerLock();
+            } else modal.classList.add('hidden');
+        }
+
+        function craftItem(item) {
+            sfx.init();
+            if (item === 'hatchet' && state.wood >= 50 && state.stone >= 20) {
+                state.wood -= 50; state.stone -= 20;
+                state.inventory.hatchet = true;
+                selectSlot(2); sfx.playCraft();
+                addLootNotification("Создан Деревянный Топор!");
+            } else if (item === 'pickaxe' && state.wood >= 30 && state.stone >= 30) {
+                state.wood -= 30; state.stone -= 30;
+                state.inventory.pickaxe = true;
+                selectSlot(3); sfx.playCraft();
+                addLootNotification("Создана Каменная Кирка!");
+            } else if (item === 'spear' && state.wood >= 40) {
+                state.wood -= 40;
+                state.inventory.spear = true;
+                selectSlot(4); sfx.playCraft();
+                addLootNotification("Создано Копье!");
+            } else if (item === 'hammer' && state.wood >= 40) {
+                state.wood -= 40;
+                state.inventory.hammer = true;
+                selectSlot(5); sfx.playCraft();
+                addLootNotification("Создан Строительный Молот!");
+            } else if (item === 'bandage' && state.wood >= 15 && state.scrap >= 5) {
+                state.wood -= 15; state.scrap -= 5;
+                state.inventory.bandage = true;
+                selectSlot(6); sfx.playCraft();
+                addLootNotification("Создан Бинт!");
+            }
+            updateHUD();
+        }
+
+        function toggleCameraView() {
+            state.isFirstPerson = !state.isFirstPerson;
+            playerMesh.visible = !state.isFirstPerson;
+            toolContainer.visible = state.isFirstPerson;
+        }
+
+        function updateHUD() {
+            document.getElementById('res-wood').textContent = state.wood;
+            document.getElementById('res-stone').textContent = state.stone;
+            document.getElementById('res-metal').textContent = state.metal;
+            document.getElementById('res-scrap').textContent = state.scrap;
+            document.getElementById('hp-val').textContent = Math.round(state.hp);
+            document.getElementById('hp-bar').style.width = `${(state.hp / state.maxHp) * 100}%`;
+            document.getElementById('hunger-val').textContent = Math.round(state.hunger);
+            document.getElementById('hunger-bar').style.width = `${state.hunger}%`;
+            document.getElementById('thirst-val').textContent = Math.round(state.thirst);
+            document.getElementById('thirst-bar').style.width = `${state.thirst}%`;
+        }
+
+        // --- Radiation & Scientist AI Loop ---
+        function updateAIAndWorld(delta) {
+            // Radiation Zone around Dome
+            const distToDome = playerGroup.position.distanceTo(domePos);
+            const radOverlay = document.getElementById('rad-overlay');
+            const radIndicator = document.getElementById('rad-indicator');
+
+            if (distToDome < 35) {
+                state.radiation = Math.min(100, state.radiation + delta * 15);
+                radOverlay.classList.remove('hidden');
+                radIndicator.classList.remove('hidden');
+                document.getElementById('rad-val').textContent = `${Math.round(state.radiation)} RAD`;
+
+                sfx.geigerTimer -= delta;
+                if (sfx.geigerTimer <= 0) {
+                    sfx.playGeigerClick();
+                    sfx.geigerTimer = 0.1 + Math.random() * 0.2;
+                }
+
+                state.hp = Math.max(0, state.hp - delta * 3.5);
+                updateHUD();
+                if (state.hp <= 0) { alert("ВЫ ПОГИБЛИ ОТ РАДИАЦИИ!"); location.reload(); }
+            } else {
+                state.radiation = Math.max(0, state.radiation - delta * 10);
+                radOverlay.classList.add('hidden');
+                radIndicator.classList.add('hidden');
+            }
+
+            // Scientist Chase AI
+            for (let sci of scientists) {
+                const dist = sci.position.distanceTo(playerGroup.position);
+                if (dist < 18) {
+                    sci.lookAt(playerGroup.position.x, sci.position.y, playerGroup.position.z);
+                    if (dist > 2.0) {
+                        sci.translateZ(sci.userData.speed * delta);
+                    } else {
+                        // Attack Player
+                        sci.userData.attackTimer = (sci.userData.attackTimer || 0) + delta;
+                        if (sci.userData.attackTimer > 1.0) {
+                            sci.userData.attackTimer = 0;
+                            state.hp = Math.max(0, state.hp - 15);
+                            sfx.playHitEnemy();
+                            updateHUD();
+                            if (state.hp <= 0) { alert("ВАС УБИЛ УЧЕНЫЙ!"); location.reload(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Main Frame Render Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+
+            if (state.gameStarted) {
+                playerGroup.rotation.y = yaw;
+
+                const moveDir = new THREE.Vector3();
+                if (isTouchDevice && (joystickVector.x !== 0 || joystickVector.y !== 0)) {
+                    moveDir.x = joystickVector.x; moveDir.z = joystickVector.y;
+                } else {
+                    if (keys.w) moveDir.z -= 1; if (keys.s) moveDir.z += 1;
+                    if (keys.a) moveDir.x -= 1; if (keys.d) moveDir.x += 1;
+                }
+                moveDir.normalize();
+
+                let currentSpeed = SPEED;
+                if (keys.shift) currentSpeed *= 1.45;
+
+                const moveWorld = moveDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+                playerGroup.position.x += moveWorld.x * currentSpeed * delta;
+                playerGroup.position.z += moveWorld.z * currentSpeed * delta;
+
+                // Tool Sway when moving
+                if (moveDir.length() > 0) {
+                    toolContainer.position.y = -0.28 + Math.sin(clock.getElapsedTime() * 10) * 0.015;
+                }
+
+                // Building Preview Position Update
+                if (buildPreviewMesh && buildPreviewMesh.visible) {
+                    const frontPos = playerGroup.position.clone().add(
+                        new THREE.Vector3(0, 1.5, -4.0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
+                    );
+                    buildPreviewMesh.position.copy(frontPos);
+                    buildPreviewMesh.rotation.y = yaw;
+                }
+
+                const maxB = worldSize / 2 - 2;
+                playerGroup.position.x = Math.max(-maxB, Math.min(maxB, playerGroup.position.x));
+                playerGroup.position.z = Math.max(-maxB, Math.min(maxB, playerGroup.position.z));
+
+                // Physics Gravity
+                velocity.y -= GRAVITY * delta;
+                playerGroup.position.y += velocity.y * delta;
+                if (playerGroup.position.y <= 0) {
+                    playerGroup.position.y = 0; velocity.y = 0; isGrounded = true;
+                } else isGrounded = false;
+
+                // Camera Positioning
+                if (state.isFirstPerson) {
+                    camera.position.set(playerGroup.position.x, playerGroup.position.y + 1.6, playerGroup.position.z);
+                    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+                } else {
+                    const camOffset = new THREE.Vector3(0, 2.5, 4.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+                    camera.position.copy(playerGroup.position).add(camOffset);
+                    camera.lookAt(playerGroup.position.x, playerGroup.position.y + 1.2, playerGroup.position.z);
+                }
+
+                state.hunger = Math.max(0, state.hunger - delta * 0.3);
+                state.thirst = Math.max(0, state.thirst - delta * 0.5);
+                updateAIAndWorld(delta);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            sfx.init();
+            state.gameStarted = true;
+            document.getElementById('start-overlay').classList.add('hidden');
+            if (!isTouchDevice) canvas.requestPointerLock();
+        });
+
+        animate();
+    </script>
+</body>
+</html>
